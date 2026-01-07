@@ -1,14 +1,25 @@
 from typing import Any, Dict, List, Optional, Union
 
 try:
-    from typing import Literal
+    from typing import Literal, TypedDict
 except ImportError:
-    from typing_extensions import Literal
+    from typing_extensions import Literal, TypedDict
 
 WrangleModel = Union[
     Literal["auto", "gpt-4", "gpt-4o", "gpt-4o-mini", "gemini-1.5-pro"], 
     str
 ]
+
+class SLMConfig(TypedDict, total=False):
+    """
+    Configuration for Efficiency-First Routing.
+    
+    Attributes:
+        useSlm (bool): Enable routing to Small Language Models.
+        useCase (str, optional): The specific domain (e.g., 'coding', 'chat').
+    """
+    useSlm: bool
+    useCase: Optional[str]
 
 class WrangleObject:
     def __init__(self, data: Any):
