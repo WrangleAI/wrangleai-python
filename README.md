@@ -161,6 +161,65 @@ if choice.finish_reason == "tool_calls":
 
 ---
 
+
+### 6. Efficiency-First Routing (SLM) [BETA]
+
+Use the **Efficiency Tier** to route tasks to specialized Small Language Models (SLMs) for maximum speed and cost savings. This tier is ideal for high-volume tasks like coding snippets, summarization, and data extraction where premium reasoning is not required.
+
+### Basic SLM Request
+
+By setting `useSlm: True`, WrangleAI will automatically select the best cost-effective model (e.g., `mistral-nemo`, `llama-3.1-8b`) based on prompt complexity.
+
+```python
+completion = client.chat.completions.create(
+    model="auto",
+    slm={
+        "useSlm": True,
+        "useCase": "coding" # Optional: 'chat', 'tool_use', 'reasoning', 'summarization', etc.
+    },
+    messages=[{"role": "user", "content": "Write a Python function to parse CSV files."}]
+)
+```
+
+### Auto-Scaling for Tools
+
+The Efficiency Tier is tool-aware. If you set `tool_use` within `useCase` in your request, the WrangleAI router will pivot to high-capability SLMs (such as **Qwen 2.5 72B** or **DeepSeek R1**) to ensure strict JSON schema adherence and reliable function calling.
+
+This gives you the best of both worlds: low cost for standard text generation, and high reliability for agentic workflows.
+
+```python
+completion = client.chat.completions.create(
+    model="auto",
+    slm={"useSlm": True},
+    messages=[{"role": "user", "content": "Get the stock price for NVDA."}],
+    tools=[{
+        "type": "function",
+        "function": {
+            "name": "get_stock_price",
+            "parameters": { "type": "object", "properties": { "symbol": {"type": "string"} } }
+        }
+    }]
+)
+```
+
+### Supported Use Cases
+
+Providing a `useCase` helps the router select a specialist model.
+
+| Use Case | Description |
+| :--- | :--- |
+| `coding` | Optimized for Python, JS, SQL, and debugging. |
+| `reasoning` | Tuned for math, logic puzzles, and multi-step deduction. |
+| `chat` | Optimized for natural conversation flow and "human" vibes. |
+| `summarization` | High-context window models for condensing text. |
+| `classification` | Fast, low-latency models for tagging and labeling. |
+| `creative_writing` | Tuned for storytelling and reduced refusal rates. |
+| `tool_use` | Setup for high-reliability function calling capabilities |
+| `other` | (Default) General-purpose instruction following. |
+
+> **Pro Tip:** For complex tool-use scenarios with SLMs, we recommend adding a system prompt instructing the model to "Always use the provided tool if applicable" to overcome potential passivity in smaller models.
+
+
 ## Management API
 
 Programmatically monitor your token usage, costs, and key status.

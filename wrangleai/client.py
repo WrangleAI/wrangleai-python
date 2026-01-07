@@ -2,7 +2,7 @@ import os
 import json
 import httpx
 from typing import Optional, List, Union, Generator, Any, Dict
-from .types import WrangleObject, WrangleModel
+from .types import WrangleObject, WrangleModel, SLMConfig
 
 class WrangleAI:
     def __init__(
@@ -82,6 +82,7 @@ class Completions:
         model: WrangleModel,
         stream: bool = False,
         temperature: Optional[float] = None,
+        slm: Optional[SLMConfig] = None, 
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         **kwargs
@@ -100,7 +101,8 @@ class Completions:
             "stream": stream,
             **kwargs
         }
-
+        if slm:
+            payload["slm"] = slm
         if temperature is not None:
             payload["temperature"] = temperature
         if tools:
