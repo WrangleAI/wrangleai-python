@@ -1,36 +1,35 @@
-# File: wrangleai/client.py
 import os
 import json
 import httpx
-from typing import Optional, List, Union, Generator, Any, Dict
+from typing import Optional, List, Union, AsyncGenerator, Any, Dict
 from .types import (
     ChatCompletion, ChatCompletionChunk, WrangleModel, SLMConfig, 
-    UsageReport, CostReport, KeyInfo, ModelUsageStats
+    UsageReport, CostReport, KeyInfo
 )
 from .exceptions import (
     APIConnectionError, AuthenticationError, RateLimitError, 
-    BadRequestError, InternalServerError, APIStatusError, WrangleError
+    BadRequestError, InternalServerError, APIStatusError
 )
 
-class WrangleAI:
+class AsyncWrangleAI:
     def __init__(
         self, 
         api_key: Optional[str] = None, 
         base_url: str = "https://gateway.wrangleai.com/v1",
         timeout: float = 60.0,
-        http_client: Optional[httpx.Client] = None
+        http_client: Optional[httpx.AsyncClient] = None
     ):
-        """Initialize the Synchronous Wrangle AI Client."""
+        """Initialize the Async Wrangle AI Client."""
         self.api_key = api_key or os.environ.get("WRANGLE_API_KEY")
         if not self.api_key:
-            raise ValueError("The WrangleAI client requires an api_key argument or WRANGLE_API_KEY environment variable.")
+            raise ValueError("The AsyncWrangleAI client requires an api_key.")
 
         self.base_url = base_url.rstrip("/")
 
         if http_client:
             self._client = http_client
         else:
-            self._client = httpx.Client(
+            self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
@@ -39,25 +38,25 @@ class WrangleAI:
                 timeout=timeout
             )
 
-        self.chat = Chat(self)
-        self.usage = Usage(self)
-        self.cost = Cost(self)
-        self.keys = Keys(self)
+        self.chat = AsyncChat(self)
+        self.usage = AsyncUsage(self)
+        self.cost = AsyncCost(self)
+        self.keys = AsyncKeys(self)
 
-    def close(self):
-        self._client.close()
+    async def close(self):
+        await self._client.aclose()
 
-    def __enter__(self):
+    async def __aenter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
 
     def _handle_error(self, response: httpx.Response):
-        """Map HTTP status codes to exceptions."""
+        """Reuse error handling logic."""
+        # This mirrors the sync logic, re-implemented here or shared via util
         try:
             err_body = response.json()
-            # Handle standard error format {"error": "msg"} or {"error": {"message": "msg"}}
             if isinstance(err_body.get("error"), dict):
                 msg = err_body["error"].get("message")
             else:
@@ -69,9 +68,7 @@ class WrangleAI:
         
         if response.status_code == 400:
             raise BadRequestError(error_msg, response.status_code, err_body)
-        elif response.status_code == 401:
-            raise AuthenticationError(error_msg, response.status_code, err_body)
-        elif response.status_code == 403:
+        elif response.status_code == 401 or response.status_code == 403:
             raise AuthenticationError(error_msg, response.status_code, err_body)
         elif response.status_code == 429:
             raise RateLimitError(error_msg, response.status_code, err_body)
@@ -80,9 +77,9 @@ class WrangleAI:
         else:
             raise APIStatusError(error_msg, response.status_code, err_body)
 
-    def _request(self, method: str, path: str, **kwargs) -> Any:
+    async def _request(self, method: str, path: str, **kwargs) -> Any:
         try:
-            response = self._client.request(method, path, **kwargs)
+            response = await self._client.request(method, path, **kwargs)
             if response.is_error:
                 self._handle_error(response)
             return response.json()
@@ -91,16 +88,15 @@ class WrangleAI:
         except httpx.TimeoutException as e:
             raise APIConnectionError(f"Request timed out: {e}") from e
 
-# --- Chat Namespace ---
-class Chat:
-    def __init__(self, client: WrangleAI):
-        self.completions = Completions(client)
+class AsyncChat:
+    def __init__(self, client: AsyncWrangleAI):
+        self.completions = AsyncCompletions(client)
 
-class Completions:
-    def __init__(self, client: WrangleAI):
+class AsyncCompletions:
+    def __init__(self, client: AsyncWrangleAI):
         self._client = client
 
-    def create(
+    async def create(
         self,
         messages: List[Dict[str, Any]],
         model: WrangleModel,
@@ -110,7 +106,7 @@ class Completions:
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         **kwargs
-    ) -> Union[ChatCompletion, Generator[ChatCompletionChunk, None, None]]:
+    ) -> Union[ChatCompletion, AsyncGenerator[ChatCompletionChunk, None]]:
         
         payload = {
             "model": model,
@@ -119,29 +115,24 @@ class Completions:
             **kwargs
         }
         if slm:
-            # Handle both dict and Pydantic object
             payload["slm"] = slm.model_dump() if hasattr(slm, "model_dump") else slm
-        if temperature is not None:
-            payload["temperature"] = temperature
-        if tools:
-            payload["tools"] = tools
-        if tool_choice:
-            payload["tool_choice"] = tool_choice
+        if temperature: payload["temperature"] = temperature
+        if tools: payload["tools"] = tools
+        if tool_choice: payload["tool_choice"] = tool_choice
 
         if stream:
             return self._stream_request(payload)
         else:
-            data = self._client._request("POST", "/chat/completions", json=payload)
-            # Use Pydantic model validation
+            data = await self._client._request("POST", "/chat/completions", json=payload)
             return ChatCompletion.model_validate(data)
 
-    def _stream_request(self, payload):
+    async def _stream_request(self, payload):
         try:
-            with self._client._client.stream("POST", "/chat/completions", json=payload) as response:
+            async with self._client._client.stream("POST", "/chat/completions", json=payload) as response:
                 if response.status_code != 200:
                     self._client._handle_error(response)
 
-                for line in response.iter_lines():
+                async for line in response.aiter_lines():
                     if not line: continue
                     if line.startswith("data: "):
                         data = line[6:]
@@ -155,51 +146,32 @@ class Completions:
         except httpx.ConnectError as e:
             raise APIConnectionError(f"Stream connection failed: {e}") from e
 
-# --- Usage Namespace ---
-class Usage:
-    def __init__(self, client: WrangleAI):
+class AsyncUsage:
+    def __init__(self, client: AsyncWrangleAI):
         self._client = client
 
-    def retrieve(self, start_date: str = None, end_date: str = None) -> UsageReport:
+    async def retrieve(self, start_date: str = None, end_date: str = None) -> UsageReport:
         params = {}
         if start_date: params["startDate"] = start_date
         if end_date: params["endDate"] = end_date
-
-        data = self._client._request("GET", "/usage", params=params)
+        data = await self._client._request("GET", "/usage", params=params)
         return UsageReport.model_validate(data)
 
-    # Note: retrieve_by_model returns raw dict structure in previous code, 
-    # assuming SingleModelUsage follows UsageResponse logic roughly or needs its own model.
-    # For now, returning standard usage report model or raw data if struct differs.
-    def retrieve_by_model(self, model: str, start_date: str = None, end_date: str = None) -> Any:
-        params = {"model": model}
-        if start_date: params["startDate"] = start_date
-        if end_date: params["endDate"] = end_date
-        data = self._client._request("GET", "/usage/model", params=params)
-        # Assuming the API returns a similar structure or we define a specific model later.
-        # Returning raw dict wrapped in simpler object for now if complex.
-        return data 
-
-# --- Cost Namespace ---
-class Cost:
-    def __init__(self, client: WrangleAI):
+class AsyncCost:
+    def __init__(self, client: AsyncWrangleAI):
         self._client = client
 
-    def retrieve(self, start_date: str = None, end_date: str = None) -> CostReport:
+    async def retrieve(self, start_date: str = None, end_date: str = None) -> CostReport:
         params = {}
         if start_date: params["startDate"] = start_date
         if end_date: params["endDate"] = end_date
-
-        data = self._client._request("GET", "/cost", params=params)
+        data = await self._client._request("GET", "/cost", params=params)
         return CostReport.model_validate(data)
 
-# --- Keys Namespace ---
-class Keys:
-    def __init__(self, client: WrangleAI):
+class AsyncKeys:
+    def __init__(self, client: AsyncWrangleAI):
         self._client = client
 
-    def verify(self) -> KeyInfo:
-        # Here we manually construct the call to skip default _request handling 
-        # if we want specific behavior, but _request is fine.
-        data = self._client._request("GET", "/keys/verify", headers={"X-API-Key": self._client.api_key})
+    async def verify(self) -> KeyInfo:
+        data = await self._client._request("GET", "/keys/verify", headers={"X-API-Key": self._client.api_key})
         return KeyInfo.model_validate(data)

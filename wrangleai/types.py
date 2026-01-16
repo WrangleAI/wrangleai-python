@@ -1,59 +1,93 @@
-from typing import Any, Dict, List, Optional, Union
+# File: wrangleai/types.py
+from typing import List, Optional, Union, Dict, Any, Literal
+from pydantic import BaseModel, Field
 
-try:
-    from typing import Literal, TypedDict
-except ImportError:
-    from typing_extensions import Literal, TypedDict
+# --- Common ---
+class Usage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
+class FunctionCall(BaseModel):
+    name: str
+    arguments: str
+
+class ToolCall(BaseModel):
+    id: str
+    type: str = "function"
+    function: FunctionCall
+
+# --- Chat Models ---
+class ChatMessage(BaseModel):
+    role: str
+    content: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+
+class Choice(BaseModel):
+    index: int
+    message: ChatMessage
+    finish_reason: Optional[str] = None
+
+class ChatCompletion(BaseModel):
+    id: str
+    object: Literal["chat.completion", "chat.completion.chunk"]
+    created: int
+    model: str
+    choices: List[Choice]
+    usage: Optional[Usage] = None
+    output: Optional[List[Dict[str, Any]]] = None # For Grounding/Web Search responses
+
+# --- Streaming Models ---
+class Delta(BaseModel):
+    role: Optional[str] = None
+    content: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+
+class ChunkChoice(BaseModel):
+    index: int
+    delta: Delta
+    finish_reason: Optional[str] = None
+
+class ChatCompletionChunk(BaseModel):
+    id: str
+    object: Literal["chat.completion.chunk"]
+    created: int
+    model: str
+    choices: List[ChunkChoice]
+    usage: Optional[Usage] = None
+
+# --- Usage/Cost Models ---
+class ModelUsageStats(BaseModel):
+    model: str
+    requests: int
+    input_tokens: int = Field(alias="inputTokens")
+    output_tokens: int = Field(alias="outputTokens")
+    total_tokens: int = Field(alias="totalTokens")
+    total_cost: float = Field(alias="total_cost")
+
+class UsageReport(BaseModel):
+    total_requests: int
+    total_tokens: int
+    total_cost: float
+    optimized: bool
+    usage_by_model: List[ModelUsageStats]
+
+class CostReport(BaseModel):
+    total_cost: float
+
+class KeyInfo(BaseModel):
+    valid: bool
+    message: str
+    apiKeyId: str
+    keyStatus: str
+    expiry: Optional[str] = None
+
+# Type Alias for Routing
 WrangleModel = Union[
-    Literal["auto", "gpt-4", "gpt-4o", "gpt-4o-mini", "gemini-1.5-pro"], 
+    Literal["auto", "gpt-4o", "gpt-4o-mini", "gemini-2.5-pro", "gemini-2.5-flash"], 
     str
 ]
 
-class SLMConfig(TypedDict, total=False):
-    """
-    Configuration for Efficiency-First Routing.
-    
-    Attributes:
-        useSlm (bool): Enable routing to Small Language Models.
-        useCase (str, optional): The specific domain (e.g., 'coding', 'chat').
-    """
+class SLMConfig(BaseModel):
     useSlm: bool
-    useCase: Optional[str]
-
-class WrangleObject:
-    def __init__(self, data: Any):
-        self._data = data
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if isinstance(value, (dict, list)):
-                    setattr(self, key, WrangleObject(value))
-                else:
-                    setattr(self, key, value)
-
-    def __len__(self):
-        if isinstance(self._data, (list, dict, str)):
-            return len(self._data)
-        return 0
-
-    def __getattr__(self, name):
-        return None
-    
-    def __getitem__(self, index):
-        if isinstance(self._data, list):
-            val = self._data[index]
-            return WrangleObject(val) if isinstance(val, (dict, list)) else val
-        raise TypeError("WrangleObject is not subscriptable")
-
-    def __iter__(self):
-        if isinstance(self._data, list):
-            for item in self._data:
-                yield WrangleObject(item) if isinstance(item, (dict, list)) else item
-        else:
-            raise TypeError("WrangleObject is not iterable")
-
-    def __repr__(self):
-        return f"{self._data}"
-    
-    def to_dict(self) -> Any:
-        return self._data
+    useCase: Optional[str] = None
