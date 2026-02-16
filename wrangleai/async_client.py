@@ -21,7 +21,8 @@ class AsyncWrangleAI:
         self,
         api_key: Optional[str] = None,
         # base_url: str = "https://gateway.wrangleai.com/v1",
-        base_url: str = "https://bd1851h1-8080.uks1.devtunnels.ms/v1",
+        base_url: str = "https://staging-gateway.wrangleai.com/v1",
+        # base_url: str = "https://bd1851h1-8080.uks1.devtunnels.ms/v1",
         timeout: float = 60.0
     ):
         """
@@ -39,6 +40,7 @@ class AsyncWrangleAI:
             )
 
         self.base_url = base_url.rstrip("/")
+        self._last_request_id: Optional[str] = None
 
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
@@ -70,6 +72,8 @@ class AsyncWrangleAI:
         try:
             response = await self._client.request(method, path, **kwargs)
             response.raise_for_status()
+            # Store request ID for later retrieval if needed
+            self._last_request_id = response.headers.get("x-request-id")
             return response.json()
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
@@ -190,7 +194,10 @@ class AsyncCompletions:
             data = await self._client._request("POST", "/chat/completions", json=payload)
             if legacy_response:
                 return WrangleObject(data)
-            return ChatCompletion.model_validate(data)
+            completion = ChatCompletion.model_validate(data)
+            # Set request ID from last request
+            completion._request_id = self._client._last_request_id
+            return completion
 
     async def _stream_request(
         self, 
@@ -199,6 +206,9 @@ class AsyncCompletions:
     ) -> AsyncGenerator[Union[ChatCompletionChunk, WrangleObject], None]:
         """Stream SSE responses asynchronously."""
         async with self._client._client.stream("POST", "/chat/completions", json=payload) as response:
+            # Capture request ID from headers
+            request_id = response.headers.get("x-request-id")
+            
             if response.status_code != 200:
                 content = (await response.aread()).decode('utf-8')
                 try:
@@ -234,7 +244,9 @@ class AsyncCompletions:
                         if legacy_response:
                             yield WrangleObject(chunk)
                         else:
-                            yield ChatCompletionChunk.model_validate(chunk)
+                            chunk_obj = ChatCompletionChunk.model_validate(chunk)
+                            chunk_obj._request_id = request_id
+                            yield chunk_obj
                     except json.JSONDecodeError:
                         pass
 

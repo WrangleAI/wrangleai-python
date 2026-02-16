@@ -16,7 +16,8 @@ class WrangleAI:
         self, 
         api_key: Optional[str] = None, 
         # base_url: str = "https://gateway.wrangleai.com/v1",
-        base_url: str = "https://bd1851h1-8080.uks1.devtunnels.ms/v1",
+        base_url: str = "https://staging-gateway.wrangleai.com/v1",
+        # base_url: str = "https://bd1851h1-8080.uks1.devtunnels.ms/v1",
         timeout: float = 60.0
     ):
         """
@@ -32,6 +33,7 @@ class WrangleAI:
             raise ValueError("The WrangleAI client requires an api_key argument or WRANGLE_API_KEY environment variable.")
 
         self.base_url = base_url.rstrip("/")
+        self._last_request_id: Optional[str] = None
 
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -62,6 +64,8 @@ class WrangleAI:
         try:
             response = self._client.request(method, path, **kwargs)
             response.raise_for_status()
+            # Store request ID for later retrieval if needed
+            self._last_request_id = response.headers.get("x-request-id")
             return response.json()
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
@@ -180,11 +184,17 @@ class Completions:
             data = self._client._request("POST", "/chat/completions", json=payload)
             if legacy_response:
                 return WrangleObject(data)
-            return ChatCompletion.model_validate(data)
+            completion = ChatCompletion.model_validate(data)
+            # Set request ID from last request
+            completion._request_id = self._client._last_request_id
+            return completion
 
     def _stream_request(self, payload, legacy_response: bool = False):
         """Stream SSE responses with Python 3.13 compatibility."""
         with self._client._client.stream("POST", "/chat/completions", json=payload) as response:
+            # Capture request ID from headers
+            request_id = response.headers.get("x-request-id")
+            
             if response.status_code != 200:
                 content = response.read().decode('utf-8')
                 try:
@@ -221,7 +231,9 @@ class Completions:
                             if legacy_response:
                                 yield WrangleObject(chunk)
                             else:
-                                yield ChatCompletionChunk.model_validate(chunk)
+                                chunk_obj = ChatCompletionChunk.model_validate(chunk)
+                                chunk_obj._request_id = request_id
+                                yield chunk_obj
                         except json.JSONDecodeError:
                             pass
             except GeneratorExit:

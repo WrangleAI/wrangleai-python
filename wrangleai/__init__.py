@@ -11,6 +11,7 @@ from .exceptions import (
 from .types import (
     WrangleModel,
     SLMConfig,
+    MessageParam,
     WrangleObject,
     ChatCompletion,
     ChatCompletionChunk,
@@ -35,6 +36,7 @@ __all__ = [
     "APIConnectionError",
     "WrangleModel",
     "SLMConfig",
+    "MessageParam",
     "WrangleObject",
     "ChatCompletion",
     "ChatCompletionChunk",

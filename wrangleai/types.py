@@ -17,6 +17,25 @@ WrangleModel = Union[
     str
 ]
 
+
+# --- TypedDict for Request Parameters (OpenAI-compatible) ---
+
+class MessageParam(TypedDict, total=False):
+    """
+    Message parameter for chat completions.
+    
+    Attributes:
+        role: The role of the message author (user, assistant, system, etc.)
+        content: The message content
+        name: Optional name for the message author
+        tool_calls: Optional tool calls in the message
+    """
+    role: str
+    content: str
+    name: Optional[str]
+    tool_calls: Optional[List[Dict[str, Any]]]
+
+
 class SLMConfig(TypedDict, total=False):
     """
     Configuration for Efficiency-First Routing.
@@ -95,6 +114,15 @@ if BaseModel is not None:
         created: int
         model: str
         choices: List[Choice]
+        _request_id: Optional[str] = None
+        
+        def to_json(self, **kwargs) -> str:
+            """OpenAI-compatible alias for model_dump_json()."""
+            return self.model_dump_json(**kwargs)
+        
+        def to_dict(self, **kwargs) -> Dict[str, Any]:
+            """OpenAI-compatible alias for model_dump()."""
+            return self.model_dump(**kwargs)
     
     
     class ChatCompletion(BaseModel):
@@ -107,6 +135,15 @@ if BaseModel is not None:
         model: str
         choices: List[Choice]
         usage: Usage
+        _request_id: Optional[str] = None
+        
+        def to_json(self, **kwargs) -> str:
+            """OpenAI-compatible alias for model_dump_json()."""
+            return self.model_dump_json(**kwargs)
+        
+        def to_dict(self, **kwargs) -> Dict[str, Any]:
+            """OpenAI-compatible alias for model_dump()."""
+            return self.model_dump(**kwargs)
 else:
     # Fallback stubs if pydantic is not installed
     class FunctionCall:  # type: ignore
