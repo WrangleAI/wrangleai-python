@@ -5,6 +5,13 @@ try:
 except ImportError:
     from typing_extensions import Literal, TypedDict
 
+try:
+    from pydantic import BaseModel, Field, ConfigDict
+except ImportError:
+    BaseModel = None  # type: ignore
+    Field = None  # type: ignore
+    ConfigDict = None  # type: ignore
+
 WrangleModel = Union[
     Literal["auto", "gpt-4", "gpt-4o", "gpt-4o-mini", "gemini-1.5-pro"], 
     str
@@ -20,6 +27,111 @@ class SLMConfig(TypedDict, total=False):
     """
     useSlm: bool
     useCase: Optional[str]
+
+
+# --- Pydantic Models for Type-Safe Responses ---
+
+if BaseModel is not None:
+    class FunctionCall(BaseModel):
+        """Function call details within a tool call."""
+        model_config = ConfigDict(extra="allow")
+        
+        name: str
+        arguments: str  # JSON string
+    
+    
+    class ToolCall(BaseModel):
+        """Tool call in a completion response."""
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        type: Literal["function"]
+        function: FunctionCall
+    
+    
+    class Delta(BaseModel):
+        """Incremental content delta in streaming responses."""
+        model_config = ConfigDict(extra="allow")
+        
+        content: Optional[str] = None
+        role: Optional[str] = None
+        tool_calls: Optional[List[ToolCall]] = None
+    
+    
+    class Message(BaseModel):
+        """Complete message in non-streaming responses."""
+        model_config = ConfigDict(extra="allow")
+        
+        role: str
+        content: Optional[str] = None
+        tool_calls: Optional[List[ToolCall]] = None
+    
+    
+    class Choice(BaseModel):
+        """A choice in a completion response."""
+        model_config = ConfigDict(extra="allow")
+        
+        index: int
+        delta: Optional[Delta] = None  # For streaming
+        message: Optional[Message] = None  # For non-streaming
+        finish_reason: Optional[str] = None
+    
+    
+    class Usage(BaseModel):
+        """Token usage information."""
+        model_config = ConfigDict(extra="allow")
+        
+        prompt_tokens: int
+        completion_tokens: int
+        total_tokens: int
+    
+    
+    class ChatCompletionChunk(BaseModel):
+        """Streaming chat completion chunk."""
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        object: str = "chat.completion.chunk"
+        created: int
+        model: str
+        choices: List[Choice]
+    
+    
+    class ChatCompletion(BaseModel):
+        """Non-streaming chat completion response."""
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        object: str = "chat.completion"
+        created: int
+        model: str
+        choices: List[Choice]
+        usage: Usage
+else:
+    # Fallback stubs if pydantic is not installed
+    class FunctionCall:  # type: ignore
+        pass
+    
+    class ToolCall:  # type: ignore
+        pass
+    
+    class Delta:  # type: ignore
+        pass
+    
+    class Message:  # type: ignore
+        pass
+    
+    class Choice:  # type: ignore
+        pass
+    
+    class Usage:  # type: ignore
+        pass
+    
+    class ChatCompletionChunk:  # type: ignore
+        pass
+    
+    class ChatCompletion:  # type: ignore
+        pass
 
 class WrangleObject:
     def __init__(self, data: Any):

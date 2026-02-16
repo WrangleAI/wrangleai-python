@@ -10,6 +10,17 @@ This library provides a drop-in replacement for the OpenAI SDK, adding **Smart R
 
 ---
 
+## What's New in v0.3.0
+
+ **Native Async Support** - Full asyncio support with `AsyncWrangleAI` client  
+ **Type Safety** - Pydantic models for all API responses with IDE autocomplete  
+ **Smart Error Handling** - Specific exception types for different error scenarios  
+ **Python 3.13 Compatible** - Improved streaming stability
+
+See [Migration Guide](#migration-guide) for upgrading from v0.2.x.
+
+---
+
 ## Installation
 
 ```bash
@@ -29,10 +40,48 @@ export WRANGLE_API_KEY="sk-..."
 ```python
 from wrangleai import WrangleAI
 
-client = WrangleAI(
-    api_key="sk-..."
-)
+client = WrangleAI(api_key="sk-...")
 ```
+
+---
+
+## Async Support (New in v0.3.0)
+
+For asyncio applications (FastAPI, WebSocket servers, LiveKit agents), use the `AsyncWrangleAI` client:
+
+```python
+from wrangleai import AsyncWrangleAI
+
+async def main():
+    async with AsyncWrangleAI() as client:
+        # Non-streaming
+        response = await client.chat.completions.create(
+            model="auto",
+            messages=[{"role": "user", "content": "Hello!"}]
+        )
+        print(response.choices[0].message.content)
+        
+        # Streaming
+        stream = await client.chat.completions.create(
+            model="auto",
+            messages=[{"role": "user", "content": "Count to 5"}],
+            stream=True
+        )
+        
+        async for chunk in stream:
+            if chunk.choices[0].delta.content:
+                print(chunk.choices[0].delta.content, end="")
+
+# Run with asyncio
+import asyncio
+asyncio.run(main())
+```
+
+**Key Benefits:**
+- Native asyncio support (no `asyncio.to_thread` wrappers needed)
+- Async context manager support (`async with`)
+- Async generators for streaming (`async for`)
+- Same API surface as sync client
 
 ---
 
@@ -252,6 +301,184 @@ print(f"Total Spend: ${cost.total_cost}")
 ```
 
 ### API Key Verification
+The SDK provides specific exception types for different error scenarios:
+
+```python
+from wrangleai import WrangleAI
+from wrangleai.exceptions import (
+    AuthenticationError,
+    RateLimitError,
+    BadRequestError,
+    APIError,
+    APIConnectionError
+)
+
+client = WrangleAI()
+
+try:
+    response = client.chat.completions.create(
+        model="auto",
+        messages=[{"role": "user", "content": "Hello"}]
+    )
+except AuthenticationError as e:
+    print(f"Invalid API key: {e}")
+    # Handle auth errors (check API key)
+except RateLimitError as e:
+    print(f"Rate limit hit: {e}")
+    # Implement retry with backoff
+except BadRequestError as e:
+    print(f"Invalid request: {e}")
+    # Fix request parameters
+except APIError as e:
+    print(f"Server error: {e}")
+    # Retry or alert monitoring
+except APIConnectionError as e:
+    print(f"Network error: {e}")
+    # Check internet connection
+```
+
+**Exception Hierarchy:**
+- `WrangleError` (base exception)
+  - `AuthenticationError` (401, 403)
+  - `RateLimitError` (429)
+  - `BadRequestError` (400)
+  - `APIError` (500+)
+  - `APIConnectionError` (network/timeout issues)
+
+---
+
+## Type Safety (New in v0.3.0)
+
+All API responses use Pydantic models for type safety and IDE autocomplete:
+
+```python
+from wrangleai import WrangleAI
+from wrangleai.types import ChatCompletion, ChatCompletionChunk
+
+client = WrangleAI()
+
+# Non-streaming returns ChatCompletion
+response: ChatCompletion = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Hi"}]
+)
+
+# Access with full type hints
+content: str | None = response.choices[0].message.content
+tokens: int = response.usage.total_tokens
+
+# Streaming returns Generator[ChatCompletionChunk]
+stream = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Hi"}],
+    stream=True
+)
+
+for chunk in stream:
+    # IDE provides autocomplete for .delta, .choices, etc.
+    delta_content: str | None = chunk.choices[0].delta.content
+```
+
+**Available Models:**
+- `ChatCompletion` - Non-streaming response
+- `ChatCompletionChunk` - Streaming chunk
+- `Choice` - Individual completion choice
+- `Message` - Complete message with role/content
+- `Delta` - Incremental content update
+- `ToolCall` - Function call details
+- `Usage` - Token usage statistics
+
+### Legacy Response Mode
+
+If you need the old `WrangleObject` behavior (v0.2.x), use `legacy_response=True`:
+
+```python
+response = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Hi"}],
+    legacy_response=True  # Returns WrangleObject instead of ChatCompletion
+)
+```
+
+---
+
+## Migration Guide
+
+### Upgrading from v0.2.x to v0.3.0
+
+**Breaking Changes: None** (fully backward compatible)
+
+**Recommended Updates:**
+
+1. **Install new dependencies:**
+   ```bash
+   pip install --upgrade wrangleai
+   ```
+
+2. **Use async client for asyncio apps:**
+   ```python
+   # Old (v0.2.x) - required manual threading
+   import asyncio
+   from wrangleai import WrangleAI
+   
+   client = WrangleAI()
+   stream = await asyncio.to_thread(
+       client.chat.completions.create,
+       model="auto",
+       messages=[...],
+       stream=True
+   )
+   
+   # New (v0.3.0) - native async
+   from wrangleai import AsyncWrangleAI
+   
+   async with AsyncWrangleAI() as client:
+       stream = await client.chat.completions.create(
+           model="auto",
+           messages=[...],
+           stream=True
+       )
+       async for chunk in stream:
+           print(chunk.choices[0].delta.content)
+   ```
+
+3. **Add type hints (optional but recommended):**
+   ```python
+   from wrangleai.types import ChatCompletion
+   
+   response: ChatCompletion = client.chat.completions.create(...)
+   ```
+
+4. **Update error handling (optional):**
+   ```python
+   # Old
+   try:
+       response = client.chat.completions.create(...)
+   except Exception as e:
+       print(f"Error: {e}")
+   
+   # New - specific exceptions
+   from wrangleai.exceptions import RateLimitError
+   
+   try:
+       response = client.chat.completions.create(...)
+   except RateLimitError:
+       # Implement retry logic
+       pass
+   ```
+
+---
+
+## Requirements
+
+*   `Python 3.8+`
+*   `httpx>=0.27.0`
+*   `pydantic>=2.0.0`
+
+---
+
+## Error Handling
+
 Check if your current key is valid and active.
 
 ```python

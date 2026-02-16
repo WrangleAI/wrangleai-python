@@ -30,3 +30,13 @@ env/
 
 # --- Distribution / Packaging ---
 MANIFEST
+
+
+# Test Cases
+tests/
+
+# testing environment
+.venv/
+
+# pytest cache
+.pytest_cache/
