@@ -309,7 +309,6 @@ class Models:
     def list(self) -> ModelsListResponse:
         """
         Lists the currently available models.
-        Compatible with OpenAI's models.list() endpoint.
         
         Returns:
             ModelsListResponse: List of available models

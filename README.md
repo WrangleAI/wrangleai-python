@@ -300,6 +300,156 @@ cost = client.cost.retrieve()
 print(f"Total Spend: ${cost.total_cost}")
 ```
 
+### List Available Models
+
+Get a list of all currently available models:
+
+```python
+models = client.models.list()
+
+print(f"Available models: {len(models.data)}")
+for model in models.data:
+    print(f"- {model.id} ({model.owned_by})")
+```
+
+---
+
+## RAG API (Files & Vector Stores)
+
+WrangleAI provides a complete RAG (Retrieval-Augmented Generation) API for file management and vector search operations.
+
+### Files API
+
+Upload and manage files for use in vector stores:
+
+```python
+# Upload a file
+with open("document.txt", "rb") as f:
+    file_obj = client.files.create(file=f, purpose="assistants")
+    print(f"Uploaded: {file_obj.id}")
+
+# List all files
+files_list = client.files.list(limit=10)
+for file in files_list.data:
+    print(f"{file.filename} - {file.bytes} bytes")
+
+# Retrieve file metadata
+file = client.files.retrieve(file_id="file-abc123")
+
+# Delete a file
+client.files.delete(file_id="file-abc123")
+```
+
+### Vector Stores API
+
+Create and manage vector stores for semantic search:
+
+```python
+# Create a vector store
+vector_store = client.vector_stores.create(
+    name="Knowledge Base",
+    file_ids=["file-abc123"],  # Optional: add files immediately
+    metadata={"category": "documentation"}
+)
+
+# List vector stores
+stores = client.vector_stores.list(limit=5, order="desc")
+
+# Retrieve a vector store
+store = client.vector_stores.retrieve(vector_store_id="vs_abc123")
+
+# Update vector store
+updated = client.vector_stores.update(
+    vector_store_id="vs_abc123",
+    name="Updated Knowledge Base"
+)
+
+# Search within a vector store
+results = client.vector_stores.search(
+    vector_store_id="vs_abc123",
+    query="How do I authenticate?",
+    max_num_results=5
+)
+
+for result in results.data:
+    print(f"Score: {result.score}")
+    print(f"Content: {result.content[0].text}")
+    print(f"File: {result.filename}")
+
+# Delete vector store
+client.vector_stores.delete(vector_store_id="vs_abc123")
+```
+
+### Vector Store Files
+
+Manage files within vector stores:
+
+```python
+# Add file to vector store
+vs_file = client.vector_stores.files.create(
+    vector_store_id="vs_abc123",
+    file_id="file-abc123",
+    attributes={"source": "documentation"}
+)
+
+# List files in vector store
+files = client.vector_stores.files.list(
+    vector_store_id="vs_abc123",
+    filter="completed"  # or "in_progress", "failed", "cancelled"
+)
+
+# Get file from vector store
+file = client.vector_stores.files.retrieve(
+    vector_store_id="vs_abc123",
+    file_id="file-abc123"
+)
+
+# Update file attributes
+updated_file = client.vector_stores.files.update(
+    vector_store_id="vs_abc123",
+    file_id="file-abc123",
+    attributes={"updated": "true"}
+)
+
+# Remove file from vector store
+client.vector_stores.files.delete(
+    vector_store_id="vs_abc123",
+    file_id="file-abc123"
+)
+```
+
+### Async RAG Operations
+
+All RAG operations are available in the async client:
+
+```python
+from wrangleai import AsyncWrangleAI
+
+async with AsyncWrangleAI() as client:
+    # Upload file
+    with open("doc.txt", "rb") as f:
+        file = await client.files.create(file=f)
+    
+    # Create vector store
+    store = await client.vector_stores.create(name="Docs")
+    
+    # Add file to store
+    await client.vector_stores.files.create(
+        vector_store_id=store.id,
+        file_id=file.id
+    )
+    
+    # Search
+    results = await client.vector_stores.search(
+        vector_store_id=store.id,
+        query="test query"
+    )
+```
+
+---
+
+## Error Handling
+
 ### API Key Verification
 The SDK provides specific exception types for different error scenarios:
 
