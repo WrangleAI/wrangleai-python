@@ -12,14 +12,38 @@ class WrangleError(Exception):
         self.status_code = status_code
         self.response_body = response_body
 
+"""
+Error Details in OpenAI SDK:
+Status Code	    Error Type
+
+    400	        BadRequestError
+    401	        AuthenticationError
+    403	        PermissionDeniedError
+    404	        NotFoundError
+    422	        UnprocessableEntityError
+    429	        RateLimitError
+    >=500	      InternalServerError
+    N/A	        APIConnectionError
+
+"""
 
 class AuthenticationError(WrangleError):
-    """Raised when API key is invalid or missing (401, 403)."""
+    """Raised when API key is invalid or missing (401)."""
+    pass
+
+
+class PermissionDeniedError(WrangleError):
+    """Raised when the user does not have permission to access the resource (403)."""
     pass
 
 
 class RateLimitError(WrangleError):
     """Raised when rate limit is exceeded (429)."""
+    pass
+
+
+class UnprocessableEntity(WrangleError):
+    """Raised when Unprocessable Entity (422)."""
     pass
 
 

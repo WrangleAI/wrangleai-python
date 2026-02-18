@@ -20,10 +20,24 @@ from .types import (
     Message,
     ToolCall,
     FunctionCall,
-    Usage
+    Usage,
+    Model,
+    ModelsListResponse,
+    FileObject,
+    FileDeleted,
+    FileListResponse,
+    VectorStore,
+    VectorStoreDeleted,
+    VectorStoreListResponse,
+    VectorStoreFile,
+    VectorStoreFileDeleted,
+    VectorStoreFileListResponse,
+    VectorStoreSearchResponse,
+    SearchResultItem,
+    SearchResultContent
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "WrangleAI",
@@ -46,5 +60,19 @@ __all__ = [
     "ToolCall",
     "FunctionCall",
     "Usage",
+    "Model",
+    "ModelsListResponse",
+    "FileObject",
+    "FileDeleted",
+    "FileListResponse",
+    "VectorStore",
+    "VectorStoreDeleted",
+    "VectorStoreListResponse",
+    "VectorStoreFile",
+    "VectorStoreFileDeleted",
+    "VectorStoreFileListResponse",
+    "VectorStoreSearchResponse",
+    "SearchResultItem",
+    "SearchResultContent",
     "__version__"
 ]

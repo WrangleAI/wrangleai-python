@@ -48,6 +48,226 @@ class SLMConfig(TypedDict, total=False):
     useCase: Optional[str]
 
 
+# --- Models API Response (OpenAI-compatible) ---
+
+if BaseModel is not None:
+    class Model(BaseModel):
+        """
+        Represents a model object from the models list endpoint.
+        Compatible with OpenAI's Model response.
+        """
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        object: str = "model"
+        created: int
+        owned_by: str
+    
+    
+    class ModelsListResponse(BaseModel):
+        """
+        Response from the models list endpoint.
+        Compatible with OpenAI's models.list() response.
+        """
+        model_config = ConfigDict(extra="allow")
+        
+        object: str = "list"
+        data: List["Model"]
+
+
+# --- Files API Response Models ---
+
+if BaseModel is not None:
+    class FileObject(BaseModel):
+        """
+        Represents a file that has been uploaded to WrangleAI.
+        Compatible with OpenAI's File object.
+        """
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        object: str = "file"
+        bytes: int
+        created_at: int
+        filename: str
+        purpose: str
+        status: Optional[str] = None
+        status_details: Optional[str] = None
+        expires_at: Optional[int] = None
+    
+    
+    class FileDeleted(BaseModel):
+        """Response when a file is deleted."""
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        object: str = "file"
+        deleted: bool
+    
+    
+    class FileListResponse(BaseModel):
+        """Response from files list endpoint."""
+        model_config = ConfigDict(extra="allow")
+        
+        object: str = "list"
+        data: List["FileObject"]
+        has_more: bool
+        first_id: Optional[str] = None
+        last_id: Optional[str] = None
+
+
+# --- Vector Stores API Response Models ---
+
+if BaseModel is not None:
+    class VectorStoreFileCounts(BaseModel):
+        """File counts for a vector store."""
+        model_config = ConfigDict(extra="allow")
+        
+        total: int
+        in_progress: int
+        completed: int
+        failed: int
+        cancelled: int
+    
+    
+    class VectorStoreExpiresAfter(BaseModel):
+        """Expiration policy for a vector store."""
+        model_config = ConfigDict(extra="allow")
+        
+        anchor: str
+        days: int
+    
+    
+    class VectorStore(BaseModel):
+        """
+        Represents a vector store for RAG operations.
+        Compatible with OpenAI's VectorStore object.
+        """
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        object: str = "vector_store"
+        created_at: int
+        name: str
+        usage_bytes: int
+        file_counts: VectorStoreFileCounts
+        status: str
+        expires_after: Optional[VectorStoreExpiresAfter] = None
+        expires_at: Optional[int] = None
+        last_active_at: Optional[int] = None
+        metadata: Optional[Dict[str, Any]] = None
+    
+    
+    class VectorStoreDeleted(BaseModel):
+        """Response when a vector store is deleted."""
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        object: str = "vector_store.deleted"
+        deleted: bool
+    
+    
+    class VectorStoreListResponse(BaseModel):
+        """Response from vector stores list endpoint."""
+        model_config = ConfigDict(extra="allow")
+        
+        object: str = "list"
+        data: List["VectorStore"]
+        has_more: bool
+        first_id: Optional[str] = None
+        last_id: Optional[str] = None
+
+
+# --- Vector Store Files API Response Models ---
+
+if BaseModel is not None:
+    class VectorStoreFileError(BaseModel):
+        """Error information for a vector store file."""
+        model_config = ConfigDict(extra="allow")
+        
+        code: str
+        message: str
+    
+    
+    class StaticChunkingStrategy(BaseModel):
+        """Static chunking strategy parameters."""
+        model_config = ConfigDict(extra="allow")
+        
+        max_chunk_size_tokens: int
+        chunk_overlap_tokens: int
+    
+    
+    class VectorStoreFile(BaseModel):
+        """
+        Represents a file attached to a vector store.
+        Compatible with OpenAI's VectorStoreFile object.
+        """
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        object: str = "vector_store.file"
+        created_at: int
+        vector_store_id: str
+        status: str
+        usage_bytes: int
+        last_error: Optional[VectorStoreFileError] = None
+        chunking_strategy: Optional[Dict[str, Any]] = None
+        attributes: Optional[Dict[str, Union[str, int, bool]]] = None
+    
+    
+    class VectorStoreFileDeleted(BaseModel):
+        """Response when a vector store file is deleted."""
+        model_config = ConfigDict(extra="allow")
+        
+        id: str
+        object: str = "vector_store.file.deleted"
+        deleted: bool
+    
+    
+    class VectorStoreFileListResponse(BaseModel):
+        """Response from vector store files list endpoint."""
+        model_config = ConfigDict(extra="allow")
+        
+        object: str = "list"
+        data: List["VectorStoreFile"]
+        has_more: bool
+        first_id: Optional[str] = None
+        last_id: Optional[str] = None
+
+
+# --- Vector Store Search API Response Models ---
+
+if BaseModel is not None:
+    class SearchResultContent(BaseModel):
+        """Content chunk from search result."""
+        model_config = ConfigDict(extra="allow")
+        
+        type: str
+        text: str
+    
+    
+    class SearchResultItem(BaseModel):
+        """Individual search result item."""
+        model_config = ConfigDict(extra="allow")
+        
+        file_id: str
+        filename: str
+        score: float
+        content: List[SearchResultContent]
+        attributes: Optional[Dict[str, Union[str, int, bool]]] = None
+    
+    
+    class VectorStoreSearchResponse(BaseModel):
+        """Response from vector store search endpoint."""
+        model_config = ConfigDict(extra="allow")
+        
+        object: str = "vector_store.search_results.page"
+        data: List[SearchResultItem]
+        search_query: List[str]
+        has_more: bool
+        next_page: Optional[str] = None
+
+
 # --- Pydantic Models for Type-Safe Responses ---
 
 if BaseModel is not None:
