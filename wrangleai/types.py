@@ -151,7 +151,7 @@ if BaseModel is not None:
         name: str
         usage_bytes: int
         file_counts: VectorStoreFileCounts
-        status: str
+        status: str = "in_progress"
         expires_after: Optional[VectorStoreExpiresAfter] = None
         expires_at: Optional[int] = None
         last_active_at: Optional[int] = None
@@ -251,7 +251,7 @@ if BaseModel is not None:
         model_config = ConfigDict(extra="allow")
         
         file_id: str
-        filename: str
+        filename: Optional[str] = None
         score: float
         content: List[SearchResultContent]
         attributes: Optional[Dict[str, Union[str, int, bool]]] = None
@@ -262,9 +262,9 @@ if BaseModel is not None:
         model_config = ConfigDict(extra="allow")
         
         object: str = "vector_store.search_results.page"
-        data: List[SearchResultItem]
-        search_query: List[str]
-        has_more: bool
+        data: Optional[List[SearchResultItem]] = None
+        search_query: str
+        has_more: bool = False
         next_page: Optional[str] = None
 
 

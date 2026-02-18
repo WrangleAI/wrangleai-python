@@ -62,8 +62,7 @@ class WrangleAI:
         self._rag_client = httpx.Client(
             base_url=self.rag_base_url,
             headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
+                "Authorization": f"Bearer {self.api_key}"
             },
             timeout=timeout
         )
@@ -393,10 +392,7 @@ class Files:
         Returns:
             FileObject with file metadata
         """
-        if filename:
-            files = {"file": (filename, file)}
-        else:
-            files = {"file": file}
+        files = {"file": (filename, file) if filename else file}
         data = {"purpose": purpose}
         
         response = self._client._rag_client.post(

@@ -69,8 +69,7 @@ class AsyncWrangleAI:
         self._rag_client = httpx.AsyncClient(
             base_url=self.rag_base_url,
             headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
+                "Authorization": f"Bearer {self.api_key}"
             },
             timeout=timeout
         )
@@ -414,10 +413,7 @@ class AsyncFiles:
         filename: Optional[str] = None
     ) -> FileObject:
         """Upload a file to WrangleAI."""
-        if filename:
-            files = {"file": (filename, file)}
-        else:
-            files = {"file": file}
+        files = {"file": (filename, file) if filename else file}
         data = {"purpose": purpose}
         
         response = await self._client._rag_client.post(
