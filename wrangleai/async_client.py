@@ -410,10 +410,14 @@ class AsyncFiles:
     async def create(
         self, 
         file: BinaryIO,
-        purpose: str = "assistants"
+        purpose: str = "assistants",
+        filename: Optional[str] = None
     ) -> FileObject:
         """Upload a file to WrangleAI."""
-        files = {"file": file}
+        if filename:
+            files = {"file": (filename, file)}
+        else:
+            files = {"file": file}
         data = {"purpose": purpose}
         
         response = await self._client._rag_client.post(

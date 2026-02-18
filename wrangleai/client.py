@@ -379,7 +379,8 @@ class Files:
     def create(
         self, 
         file: BinaryIO,
-        purpose: str = "assistants"
+        purpose: str = "assistants",
+        filename: Optional[str] = None
     ) -> FileObject:
         """
         Upload a file to WrangleAI.
@@ -387,11 +388,15 @@ class Files:
         Args:
             file: File object opened in binary mode
             purpose: The intended purpose of the file (default: "assistants")
+            filename: Optional filename with extension (e.g., 'document.pdf')
         
         Returns:
             FileObject with file metadata
         """
-        files = {"file": file}
+        if filename:
+            files = {"file": (filename, file)}
+        else:
+            files = {"file": file}
         data = {"purpose": purpose}
         
         response = self._client._rag_client.post(
