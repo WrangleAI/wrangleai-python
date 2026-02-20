@@ -42,8 +42,13 @@ class RateLimitError(WrangleError):
     pass
 
 
-class UnprocessableEntity(WrangleError):
-    """Raised when Unprocessable Entity (422)."""
+class NotFoundError(WrangleError):
+    """Raised when resource is not found (404)."""
+    pass
+
+
+class UnprocessableEntityError(WrangleError):
+    """Raised when request is valid but unprocessable (422)."""
     pass
 
 
@@ -60,3 +65,44 @@ class APIError(WrangleError):
 class APIConnectionError(WrangleError):
     """Raised when network connection fails or times out."""
     pass
+
+
+def _make_status_error(
+    status_code: int,
+    response_body: Optional[dict] = None,
+    message: Optional[str] = None
+) -> WrangleError:
+    """Create appropriate error based on HTTP status code.
+    
+    Args:
+        status_code: HTTP status code
+        response_body: Response body dict (if available)
+        message: Error message (if already parsed)
+    
+    Returns:
+        Appropriate WrangleError subclass instance
+    """
+    if message is None:
+        message = "Unknown error"
+        if response_body:
+            if isinstance(response_body.get("error"), dict):
+                message = response_body["error"].get("message", "Unknown error")
+            else:
+                message = response_body.get("error", "Unknown error")
+    
+    if status_code == 400:
+        return BadRequestError(message, status_code, response_body)
+    elif status_code == 401:
+        return AuthenticationError(message, status_code, response_body)
+    elif status_code == 403:
+        return PermissionDeniedError(message, status_code, response_body)
+    elif status_code == 404:
+        return NotFoundError(message, status_code, response_body)
+    elif status_code == 422:
+        return UnprocessableEntityError(message, status_code, response_body)
+    elif status_code == 429:
+        return RateLimitError(message, status_code, response_body)
+    elif status_code >= 500:
+        return APIError(message, status_code, response_body)
+    else:
+        return WrangleError(message, status_code, response_body)

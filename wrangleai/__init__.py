@@ -3,6 +3,9 @@ from .async_client import AsyncWrangleAI
 from .exceptions import (
     WrangleError,
     AuthenticationError,
+    PermissionDeniedError,
+    NotFoundError,
+    UnprocessableEntityError,
     RateLimitError,
     BadRequestError,
     APIError,
@@ -12,6 +15,12 @@ from .types import (
     WrangleModel,
     SLMConfig,
     MessageParam,
+    ChatCompletionContentPart,
+    ChatCompletionContentPartText,
+    ChatCompletionContentPartImage,
+    ChatCompletionContentPartAudio,
+    ImageUrl,
+    InputAudio,
     WrangleObject,
     ChatCompletion,
     ChatCompletionChunk,
@@ -34,16 +43,22 @@ from .types import (
     VectorStoreFileListResponse,
     VectorStoreSearchResponse,
     SearchResultItem,
-    SearchResultContent
+    SearchResultContent,
+    SustainabilityReport,
+    ModelSustainabilityBreakdown,
+    EmissionsResult
 )
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "WrangleAI",
     "AsyncWrangleAI",
     "WrangleError",
     "AuthenticationError",
+    "PermissionDeniedError",
+    "NotFoundError",
+    "UnprocessableEntityError",
     "RateLimitError",
     "BadRequestError",
     "APIError",
@@ -74,5 +89,8 @@ __all__ = [
     "VectorStoreSearchResponse",
     "SearchResultItem",
     "SearchResultContent",
+    "SustainabilityReport",
+    "ModelSustainabilityBreakdown",
+    "EmissionsResult",
     "__version__"
 ]

@@ -18,6 +18,71 @@ WrangleModel = Union[
 ]
 
 
+# --- Sustainability API Types ---
+
+class ConfidenceBand(TypedDict, total=False):
+    """Error margin for carbon estimates."""
+    low: float
+    high: float
+
+
+class SustainabilityMeta(TypedDict, total=False):
+    """Debugging info about calculation methodology."""
+    region_detected: str
+    region_method: str
+    reasoning_multiplier_applied: float
+
+
+class Equivalent(TypedDict, total=False):
+    """Real-world equivalent for carbon/energy."""
+    type: str  # "carbon" or "energy"
+    label: str
+    value: float
+    unit: str
+    icon: str
+    description: str
+
+
+# --- Content Parts for Multimodal Support ---
+
+class ChatCompletionContentPartText(TypedDict):
+    """Text content part for multimodal messages."""
+    type: str  # 'text'
+    text: str
+
+
+class ImageUrl(TypedDict, total=False):
+    """Image URL configuration for vision input."""
+    url: str  # URL or base64 encoded image data
+    detail: Optional[str]  # 'auto', 'low', or 'high'
+
+
+class ChatCompletionContentPartImage(TypedDict):
+    """Image content part for multimodal messages (vision)."""
+    type: str  # 'image_url'
+    image_url: ImageUrl
+
+
+class InputAudio(TypedDict):
+    """Audio input configuration."""
+    data: str  # Base64 encoded audio data
+    format: str  # 'wav' or 'mp3'
+
+
+class ChatCompletionContentPartAudio(TypedDict):
+    """Audio content part for multimodal messages."""
+    type: str  # 'input_audio'
+    input_audio: InputAudio
+
+
+# Union type for all content parts
+ChatCompletionContentPart = Union[
+    ChatCompletionContentPartText,
+    ChatCompletionContentPartImage,
+    ChatCompletionContentPartAudio
+]
+
+
 # --- TypedDict for Request Parameters (OpenAI-compatible) ---
 
 class MessageParam(TypedDict, total=False):
@@ -26,12 +91,12 @@ class MessageParam(TypedDict, total=False):
     
     Attributes:
         role: The role of the message author (user, assistant, system, etc.)
-        content: The message content
+        content: The message content (string or multimodal content parts)
         name: Optional name for the message author
         tool_calls: Optional tool calls in the message
     """
     role: str
-    content: str
+    content: Union[str, List[ChatCompletionContentPart]]
     name: Optional[str]
     tool_calls: Optional[List[Dict[str, Any]]]
 
@@ -334,7 +399,7 @@ if BaseModel is not None:
         created: int
         model: str
         choices: List[Choice]
-        _request_id: Optional[str] = None
+        request_id: Optional[str] = None
         
         def to_json(self, **kwargs) -> str:
             """OpenAI-compatible alias for model_dump_json()."""
@@ -355,7 +420,7 @@ if BaseModel is not None:
         model: str
         choices: List[Choice]
         usage: Usage
-        _request_id: Optional[str] = None
+        request_id: Optional[str] = None
         
         def to_json(self, **kwargs) -> str:
             """OpenAI-compatible alias for model_dump_json()."""
@@ -364,6 +429,71 @@ if BaseModel is not None:
         def to_dict(self, **kwargs) -> Dict[str, Any]:
             """OpenAI-compatible alias for model_dump()."""
             return self.model_dump(**kwargs)
+
+# --- Sustainability API Response Models ---
+
+if BaseModel is not None:
+    class ConfidenceBandModel(BaseModel):
+        """Error margin for carbon estimates."""
+        model_config = ConfigDict(extra="allow")
+        
+        low: float
+        high: float
+    
+    
+    class SustainabilityMetaModel(BaseModel):
+        """Debugging info about calculation methodology."""
+        model_config = ConfigDict(extra="allow")
+        
+        region_detected: str
+        region_method: str
+        reasoning_multiplier_applied: float
+    
+    
+    class EmissionsResult(BaseModel):
+        """Calculated emissions metrics for usage."""
+        model_config = ConfigDict(extra="allow")
+        
+        energy_kwh: float
+        carbon_g: float
+        confidence_score: float
+        confidence_band: ConfidenceBandModel
+        meta: SustainabilityMetaModel
+    
+    
+    class ModelSustainabilityBreakdown(BaseModel):
+        """Usage and emissions for a specific model."""
+        model_config = ConfigDict(extra="allow")
+        
+        model: str
+        request_count: int
+        total_tokens: int
+        emissions: EmissionsResult
+    
+    
+    class EquivalentModel(BaseModel):
+        """Real-world equivalent for carbon/energy."""
+        model_config = ConfigDict(extra="allow")
+        
+        type: str
+        label: str
+        value: float
+        unit: str
+        icon: str
+        description: str
+    
+    
+    class SustainabilityReport(BaseModel):
+        """Sustainability report response from /v1/sustainability."""
+        model_config = ConfigDict(extra="allow")
+        
+        start_date: str
+        end_date: str
+        total_energy_kwh: float
+        total_carbon_grams: float
+        usage_by_model: List[ModelSustainabilityBreakdown]
+        equivalents: List[EquivalentModel]
+
 else:
     # Fallback stubs if pydantic is not installed
     class FunctionCall:  # type: ignore
@@ -388,6 +518,15 @@ else:
         pass
     
     class ChatCompletion:  # type: ignore
+        pass
+    
+    class EmissionsResult:  # type: ignore
+        pass
+    
+    class ModelSustainabilityBreakdown:  # type: ignore
+        pass
+    
+    class SustainabilityReport:  # type: ignore
         pass
 
 class WrangleObject:

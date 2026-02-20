@@ -40,3 +40,6 @@ tests/
 
 # pytest cache
 .pytest_cache/
+
+# dev docs
+dev docs/

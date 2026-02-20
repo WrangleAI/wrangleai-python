@@ -1,6 +1,7 @@
 import os
 import json
 import httpx
+import logging
 from typing import Optional, List, Union, Generator, Any, Dict, overload, BinaryIO
 from .types import (
     WrangleObject, WrangleModel, SLMConfig,
@@ -8,12 +9,16 @@ from .types import (
     FileObject, FileDeleted, FileListResponse,
     VectorStore, VectorStoreDeleted, VectorStoreListResponse,
     VectorStoreFile, VectorStoreFileDeleted, VectorStoreFileListResponse,
-    VectorStoreSearchResponse
+    VectorStoreSearchResponse, SustainabilityReport
 )
 from .exceptions import (
     WrangleError, AuthenticationError, RateLimitError,
-    BadRequestError, APIError, APIConnectionError
+    BadRequestError, APIError, APIConnectionError, PermissionDeniedError,
+    NotFoundError, UnprocessableEntityError, _make_status_error
 )
+
+# Setup logger
+logger = logging.getLogger("wrangleai")
 
 class WrangleAI:
     def __init__(
@@ -23,7 +28,8 @@ class WrangleAI:
         base_url: str = "https://staging-gateway.wrangleai.com/v1",
         # base_url: str = "https://bd1851h1-8080.uks1.devtunnels.ms/v1",
         rag_base_url: Optional[str] = None,
-        timeout: float = 60.0
+        timeout: float = 60.0,
+        max_retries: int = 0
     ):
         """
         Initialize the Wrangle AI Client.
@@ -33,12 +39,15 @@ class WrangleAI:
             base_url: The API endpoint.
             rag_base_url: The RAG API endpoint (files, vector stores). Auto-detected if not provided.
             timeout: Request timeout in seconds.
+            max_retries: Maximum number of retries for failed requests (default: 0 for backward compatibility).
+                         Retries are performed for 408, 429, 500, 502, 503, 504 status codes with exponential backoff.
         """
         self.api_key = api_key or os.environ.get("WRANGLE_API_KEY")
         if not self.api_key:
             raise ValueError("The WrangleAI client requires an api_key argument or WRANGLE_API_KEY environment variable.")
 
         self.base_url = base_url.rstrip("/")
+        self.max_retries = max_retries
         
         # Auto-detect RAG base URL (port 8085) if not provided
         if rag_base_url:
@@ -75,6 +84,45 @@ class WrangleAI:
         self.keys = Keys(self)
         self.files = Files(self)
         self.vector_stores = VectorStores(self)
+        self.sustainability = Sustainability(self)
+
+    def with_options(
+        self,
+        *,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[float] = None,
+        max_retries: Optional[int] = None
+    ) -> "WrangleAI":
+        """
+        Create a new client instance with modified configuration.
+        
+        Args:
+            api_key: Override API key
+            base_url: Override base URL
+            timeout: Override default timeout
+            max_retries: Override max retry attempts
+        
+        Returns:
+            New WrangleAI client instance with updated options
+        
+        Example:
+            ```python
+            client = WrangleAI(api_key="key1")
+            
+            # Create a new client with different settings
+            custom_client = client.with_options(
+                timeout=120.0,
+                max_retries=5
+            )
+            ```
+        """
+        return WrangleAI(
+            api_key=api_key or self.api_key,
+            base_url=base_url or self.base_url,
+            timeout=timeout if timeout is not None else 60.0,
+            max_retries=max_retries if max_retries is not None else self.max_retries
+        )
 
     def close(self):
         """Close the underlying HTTP connections."""
@@ -88,72 +136,107 @@ class WrangleAI:
         self.close()
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
-        try:
-            response = self._client.request(method, path, **kwargs)
-            response.raise_for_status()
-            # Store request ID for later retrieval if needed
-            self._last_request_id = response.headers.get("x-request-id")
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            
-            # Parse error message
+        """Make request to main server with retry logic."""
+        import time
+        
+        retries = 0
+        max_retries = self.max_retries
+        
+        # Log request details (debug level)
+        logger.debug(f"Making {method} request to {path}")
+        if "json" in kwargs:
+            logger.debug(f"Request body: {json.dumps(kwargs['json'], indent=2)}")
+        
+        while True:
             try:
-                err_body = e.response.json()
-                if isinstance(err_body.get("error"), dict):
-                    msg = err_body["error"].get("message", str(e))
-                else:
-                    msg = err_body.get("error") or str(e)
-            except Exception:
-                msg = str(e)
-                err_body = None
-            
-            # Map status codes to specific exceptions
-            if status_code in (401, 403):
-                raise AuthenticationError(msg, status_code, err_body)
-            elif status_code == 429:
-                raise RateLimitError(msg, status_code, err_body)
-            elif status_code == 400:
-                raise BadRequestError(msg, status_code, err_body)
-            elif status_code >= 500:
-                raise APIError(msg, status_code, err_body)
-            else:
-                raise WrangleError(msg, status_code, err_body)
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
-            raise APIConnectionError(f"Connection error: {str(e)}")
+                response = self._client.request(method, path, **kwargs)
+                response.raise_for_status()
+                
+                # Store request ID for later retrieval if needed
+                self._last_request_id = response.headers.get("x-request-id")
+                
+                # Log response details (debug level)
+                logger.debug(f"Response status: {response.status_code}")
+                logger.debug(f"Response headers: {dict(response.headers)}")
+                
+                result = response.json()
+                logger.debug(f"Response body: {json.dumps(result, indent=2)}")
+                
+                return result
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+                
+                # Parse error message
+                try:
+                    err_body = e.response.json()
+                    if isinstance(err_body.get("error"), dict):
+                        msg = err_body["error"].get("message", str(e))
+                    else:
+                        msg = err_body.get("error") or str(e)
+                except Exception:
+                    msg = str(e)
+                    err_body = None
+                
+                # Check if we should retry (408, 429, 500, 502, 503, 504)
+                should_retry = status_code in {408, 429, 500, 502, 503, 504}
+                
+                if should_retry and retries < max_retries:
+                    retries += 1
+                    # Exponential backoff: 1s, 2s, 4s, 8s... (capped at 60s)
+                    wait_time = min(2 ** (retries - 1), 60)
+                    logger.warning(f"Request failed with status {status_code}, retrying in {wait_time}s (attempt {retries}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                
+                # Log error
+                logger.error(f"Request failed with status {status_code}: {msg}")
+                
+                # Use centralized error mapping
+                raise _make_status_error(status_code, err_body, msg)
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                logger.error(f"Connection error: {str(e)}")
+                raise APIConnectionError(f"Connection error: {str(e)}")
     
     def _rag_request(self, method: str, path: str, **kwargs) -> Any:
-        """Make requests to RAG server (port 8085)."""
-        try:
-            response = self._rag_client.request(method, path, **kwargs)
-            response.raise_for_status()
-            self._last_request_id = response.headers.get("x-request-id")
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            
+        """Make requests to RAG server (port 8085) with retry logic."""
+        import time
+        
+        retries = 0
+        max_retries = self.max_retries
+        
+        while True:
             try:
-                err_body = e.response.json()
-                if isinstance(err_body.get("error"), dict):
-                    msg = err_body["error"].get("message", str(e))
-                else:
-                    msg = err_body.get("error") or str(e)
-            except Exception:
-                msg = str(e)
-                err_body = None
-            
-            if status_code in (401, 403):
-                raise AuthenticationError(msg, status_code, err_body)
-            elif status_code == 429:
-                raise RateLimitError(msg, status_code, err_body)
-            elif status_code == 400:
-                raise BadRequestError(msg, status_code, err_body)
-            elif status_code >= 500:
-                raise APIError(msg, status_code, err_body)
-            else:
-                raise WrangleError(msg, status_code, err_body)
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
-            raise APIConnectionError(f"Connection error: {str(e)}")
+                response = self._rag_client.request(method, path, **kwargs)
+                response.raise_for_status()
+                self._last_request_id = response.headers.get("x-request-id")
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+                
+                try:
+                    err_body = e.response.json()
+                    if isinstance(err_body.get("error"), dict):
+                        msg = err_body["error"].get("message", str(e))
+                    else:
+                        msg = err_body.get("error") or str(e)
+                except Exception:
+                    msg = str(e)
+                    err_body = None
+                
+                # Check if we should retry (408, 429, 500, 502, 503, 504)
+                should_retry = status_code in {408, 429, 500, 502, 503, 504}
+                
+                if should_retry and retries < max_retries:
+                    retries += 1
+                    # Exponential backoff: 1s, 2s, 4s, 8s...
+                    wait_time = min(2 ** (retries - 1), 60)
+                    time.sleep(wait_time)
+                    continue
+                
+                # Use centralized error mapping
+                raise _make_status_error(status_code, err_body, msg)
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                raise APIConnectionError(f"Connection error: {str(e)}")
 
 # --- Chat Namespace ---
 class Chat:
@@ -167,8 +250,9 @@ class Completions:
     @overload
     def create(
         self,
+        *,
         messages: List[Dict[str, Any]],
-        model: WrangleModel,
+        model: WrangleModel = "auto",
         stream: bool = False,
         temperature: Optional[float] = None,
         slm: Optional[SLMConfig] = None,
@@ -182,8 +266,9 @@ class Completions:
     @overload
     def create(
         self,
+        *,
         messages: List[Dict[str, Any]],
-        model: WrangleModel,
+        model: WrangleModel = "auto",
         stream: bool = True,
         temperature: Optional[float] = None,
         slm: Optional[SLMConfig] = None,
@@ -196,14 +281,17 @@ class Completions:
     
     def create(
         self,
+        *,
         messages: List[Dict[str, Any]],
-        model: WrangleModel,
+        model: WrangleModel = "auto",
         stream: bool = False,
         temperature: Optional[float] = None,
         slm: Optional[SLMConfig] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         legacy_response: bool = False,
+        timeout: Optional[float] = None,
+        extra_headers: Optional[dict] = None,
         **kwargs
     ) -> Union[ChatCompletion, WrangleObject, Generator[ChatCompletionChunk, None, None], Generator[WrangleObject, None, None]]:
         """
@@ -218,6 +306,8 @@ class Completions:
             tools: Tool definitions for function calling.
             tool_choice: Control which tool is called.
             legacy_response: If True, returns WrangleObject instead of Pydantic models.
+            timeout: Optional per-request timeout override (seconds).
+            extra_headers: Optional additional headers to include in the request.
             **kwargs: Additional parameters.
         
         Returns:
@@ -238,20 +328,33 @@ class Completions:
         if tool_choice:
             payload["tool_choice"] = tool_choice
 
+        # Prepare request kwargs
+        request_kwargs = {"json": payload}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
+        if extra_headers:
+            request_kwargs["headers"] = extra_headers
+
         if stream:
-            return self._stream_request(payload, legacy_response)
+            return self._stream_request(payload, legacy_response, timeout=timeout, extra_headers=extra_headers)
         else:
-            data = self._client._request("POST", "/chat/completions", json=payload)
+            data = self._client._request("POST", "/chat/completions", **request_kwargs)
             if legacy_response:
                 return WrangleObject(data)
             completion = ChatCompletion.model_validate(data)
             # Set request ID from last request
-            completion._request_id = self._client._last_request_id
+            completion.request_id = self._client._last_request_id
             return completion
 
-    def _stream_request(self, payload, legacy_response: bool = False):
+    def _stream_request(self, payload, legacy_response: bool = False, timeout: Optional[float] = None, extra_headers: Optional[dict] = None):
         """Stream SSE responses with Python 3.13 compatibility."""
-        with self._client._client.stream("POST", "/chat/completions", json=payload) as response:
+        request_kwargs = {"json": payload}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
+        if extra_headers:
+            request_kwargs["headers"] = extra_headers
+            
+        with self._client._client.stream("POST", "/chat/completions", **request_kwargs) as response:
             # Capture request ID from headers
             request_id = response.headers.get("x-request-id")
             
@@ -261,22 +364,12 @@ class Completions:
                     err_json = json.loads(content)
                     msg = err_json.get("error", {}).get("message") or content
                     err_body = err_json
-                except:
+                except Exception:
                     msg = content
                     err_body = None
                 
-                # Map status codes to exceptions
-                status_code = response.status_code
-                if status_code in (401, 403):
-                    raise AuthenticationError(msg, status_code, err_body)
-                elif status_code == 429:
-                    raise RateLimitError(msg, status_code, err_body)
-                elif status_code == 400:
-                    raise BadRequestError(msg, status_code, err_body)
-                elif status_code >= 500:
-                    raise APIError(msg, status_code, err_body)
-                else:
-                    raise WrangleError(msg, status_code, err_body)
+                # Use centralized error mapping
+                raise _make_status_error(response.status_code, err_body, msg)
 
             try:
                 for line in response.iter_lines():
@@ -292,7 +385,7 @@ class Completions:
                                 yield WrangleObject(chunk)
                             else:
                                 chunk_obj = ChatCompletionChunk.model_validate(chunk)
-                                chunk_obj._request_id = request_id
+                                chunk_obj.request_id = request_id
                                 yield chunk_obj
                         except json.JSONDecodeError:
                             pass
@@ -320,7 +413,7 @@ class Usage:
     def __init__(self, client: WrangleAI):
         self._client = client
 
-    def retrieve(self, start_date: str = None, end_date: str = None) -> WrangleObject:
+    def retrieve(self, start_date: Optional[str] = None, end_date: Optional[str] = None) -> WrangleObject:
         params = {}
         if start_date:
             params["startDate"] = start_date
@@ -330,7 +423,7 @@ class Usage:
         data = self._client._request("GET", "/usage", params=params)
         return WrangleObject(data)
 
-    def retrieve_by_model(self, model: str, start_date: str = None, end_date: str = None) -> WrangleObject:
+    def retrieve_by_model(self, model: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> WrangleObject:
         params = {"model": model}
         if start_date:
             params["startDate"] = start_date
@@ -345,7 +438,7 @@ class Cost:
     def __init__(self, client: WrangleAI):
         self._client = client
 
-    def retrieve(self, start_date: str = None, end_date: str = None) -> WrangleObject:
+    def retrieve(self, start_date: Optional[str] = None, end_date: Optional[str] = None) -> WrangleObject:
         params = {}
         if start_date:
             params["startDate"] = start_date
@@ -370,6 +463,36 @@ class Keys:
         return WrangleObject(data)
 
 
+# --- Sustainability Namespace ---
+class Sustainability:
+    def __init__(self, client: WrangleAI):
+        self._client = client
+
+    def retrieve(
+        self, 
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> SustainabilityReport:
+        """
+        Retrieve sustainability metrics (energy consumption and carbon emissions).
+        
+        Args:
+            start_date: Start date for the report (ISO format: YYYY-MM-DD)
+            end_date: End date for the report (ISO format: YYYY-MM-DD)
+        
+        Returns:
+            SustainabilityReport with emissions data and equivalents
+        """
+        params = {}
+        if start_date:
+            params["startDate"] = start_date
+        if end_date:
+            params["endDate"] = end_date
+        
+        data = self._client._request("GET", "/sustainability", params=params)
+        return SustainabilityReport.model_validate(data)
+
+
 # --- Files Namespace ---
 class Files:
     def __init__(self, client: WrangleAI):
@@ -379,7 +502,10 @@ class Files:
         self, 
         file: BinaryIO,
         purpose: str = "assistants",
-        filename: Optional[str] = None
+        filename: Optional[str] = None,
+        *,
+        timeout: Optional[float] = None,
+        extra_headers: Optional[dict] = None
     ) -> FileObject:
         """
         Upload a file to WrangleAI.
@@ -388,20 +514,60 @@ class Files:
             file: File object opened in binary mode
             purpose: The intended purpose of the file (default: "assistants")
             filename: Optional filename with extension (e.g., 'document.pdf')
+            timeout: Optional per-request timeout override (seconds)
+            extra_headers: Optional additional headers to include in the request
         
         Returns:
             FileObject with file metadata
         """
+        import time
+        
         files = {"file": (filename, file) if filename else file}
         data = {"purpose": purpose}
         
-        response = self._client._rag_client.post(
-            "/files",
-            files=files,
-            data=data
-        )
-        response.raise_for_status()
-        return FileObject(**response.json())
+        # Prepare request kwargs
+        request_kwargs = {"files": files, "data": data}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
+        if extra_headers:
+            # Merge with existing headers
+            request_kwargs["headers"] = extra_headers
+        
+        # Implement retry logic with error handling
+        retries = 0
+        max_retries = self._client.max_retries
+        
+        while True:
+            try:
+                response = self._client._rag_client.post("/files", **request_kwargs)
+                response.raise_for_status()
+                return FileObject(**response.json())
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+                
+                try:
+                    err_body = e.response.json()
+                    if isinstance(err_body.get("error"), dict):
+                        msg = err_body["error"].get("message", str(e))
+                    else:
+                        msg = err_body.get("error") or str(e)
+                except Exception:
+                    msg = str(e)
+                    err_body = None
+                
+                # Check if we should retry
+                should_retry = status_code in {408, 429, 500, 502, 503, 504}
+                
+                if should_retry and retries < max_retries:
+                    retries += 1
+                    wait_time = min(2 ** (retries - 1), 60)
+                    time.sleep(wait_time)
+                    continue
+                
+                # Use centralized error mapping
+                raise _make_status_error(status_code, err_body, msg)
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                raise APIConnectionError(f"Connection error: {str(e)}")
 
     def list(
         self,
