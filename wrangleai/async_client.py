@@ -29,9 +29,7 @@ class AsyncWrangleAI:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        # base_url: str = "https://gateway.wrangleai.com/v1",
-        base_url: str = "https://staging-gateway.wrangleai.com/v1",
-        # base_url: str = "https://bd1851h1-8080.uks1.devtunnels.ms/v1",
+        base_url: Optional[str] = None,
         rag_base_url: Optional[str] = None,
         timeout: float = 60.0,
         max_retries: int = 0
@@ -41,8 +39,10 @@ class AsyncWrangleAI:
         
         Args:
             api_key: Your Wrangle AI API Key. Defaults to env var WRANGLE_API_KEY.
-            base_url: The API endpoint.
-            rag_base_url: The RAG API endpoint (files, vector stores). Auto-detected if not provided.
+            base_url: The API endpoint. Can also be set via WRANGLEAI_BASE_URL environment variable.
+                      Defaults to https://gateway.wrangleai.com/v1
+            rag_base_url: The RAG API endpoint (files, vector stores). Can also be set via 
+                         WRANGLEAI_RAG_BASE_URL environment variable. Auto-detected if not provided.
             timeout: Request timeout in seconds.
             max_retries: Maximum number of retries for failed requests (default: 0 for backward compatibility).
                          Retries are performed for 408, 429, 500, 502, 503, 504 status codes with exponential backoff.
@@ -53,6 +53,12 @@ class AsyncWrangleAI:
                 "The AsyncWrangleAI client requires an api_key argument or WRANGLE_API_KEY environment variable."
             )
 
+        # Base URL: priority order - parameter > env var > default
+        if base_url is None:
+            base_url = os.environ.get("WRANGLEAI_BASE_URL")
+        if base_url is None:
+            base_url = "https://gateway.wrangleai.com/v1"
+        
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
         
@@ -60,8 +66,13 @@ class AsyncWrangleAI:
         if rag_base_url:
             self.rag_base_url = rag_base_url.rstrip("/")
         else:
-            # Replace port 8080 with 8085 for RAG endpoints
-            self.rag_base_url = self.base_url.replace(":8080", ":8085")
+            # Check environment variable first
+            rag_base_url = os.environ.get("WRANGLEAI_RAG_BASE_URL")
+            if rag_base_url:
+                self.rag_base_url = rag_base_url.rstrip("/")
+            else:
+                # Replace port 8080 with 8085 for RAG endpoints
+                self.rag_base_url = self.base_url.replace(":8080", ":8085")
         
         self._last_request_id: Optional[str] = None
 

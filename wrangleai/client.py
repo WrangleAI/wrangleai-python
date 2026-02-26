@@ -20,42 +20,55 @@ from .exceptions import (
 # Setup logger
 logger = logging.getLogger("wrangleai")
 
+
 class WrangleAI:
     def __init__(
-        self, 
-        api_key: Optional[str] = None, 
-        # base_url: str = "https://gateway.wrangleai.com/v1",
-        base_url: str = "https://staging-gateway.wrangleai.com/v1",
-        # base_url: str = "https://bd1851h1-8080.uks1.devtunnels.ms/v1",
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         rag_base_url: Optional[str] = None,
         timeout: float = 60.0,
         max_retries: int = 0
     ):
         """
         Initialize the Wrangle AI Client.
-        
+
         Args:
             api_key: Your Wrangle AI API Key. Defaults to env var WRANGLE_API_KEY.
-            base_url: The API endpoint.
-            rag_base_url: The RAG API endpoint (files, vector stores). Auto-detected if not provided.
+            base_url: The API endpoint. Can also be set via WRANGLEAI_BASE_URL environment variable.
+                      Defaults to https://gateway.wrangleai.com/v1
+            rag_base_url: The RAG API endpoint (files, vector stores). Can also be set via 
+                         WRANGLEAI_RAG_BASE_URL environment variable. Auto-detected if not provided.
             timeout: Request timeout in seconds.
             max_retries: Maximum number of retries for failed requests (default: 0 for backward compatibility).
                          Retries are performed for 408, 429, 500, 502, 503, 504 status codes with exponential backoff.
         """
         self.api_key = api_key or os.environ.get("WRANGLE_API_KEY")
         if not self.api_key:
-            raise ValueError("The WrangleAI client requires an api_key argument or WRANGLE_API_KEY environment variable.")
+            raise ValueError(
+                "The WrangleAI client requires an api_key argument or WRANGLE_API_KEY environment variable.")
 
+        # Base URL: priority order - parameter > env var > default
+        if base_url is None:
+            base_url = os.environ.get("WRANGLEAI_BASE_URL")
+        if base_url is None:
+            base_url = "https://gateway.wrangleai.com/v1"
+        
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
-        
+
         # Auto-detect RAG base URL (port 8085) if not provided
         if rag_base_url:
             self.rag_base_url = rag_base_url.rstrip("/")
         else:
-            # Replace port 8080 with 8085 for RAG endpoints
-            self.rag_base_url = self.base_url.replace(":8080", ":8085")
-        
+            # Check environment variable first
+            rag_base_url = os.environ.get("WRANGLEAI_RAG_BASE_URL")
+            if rag_base_url:
+                self.rag_base_url = rag_base_url.rstrip("/")
+            else:
+                # Replace port 8080 with 8085 for RAG endpoints
+                self.rag_base_url = self.base_url.replace(":8080", ":8085")
+
         self._last_request_id: Optional[str] = None
 
         self._client = httpx.Client(
@@ -66,7 +79,7 @@ class WrangleAI:
             },
             timeout=timeout
         )
-        
+
         # RAG client for files and vector stores (port 8085)
         self._rag_client = httpx.Client(
             base_url=self.rag_base_url,
@@ -96,20 +109,20 @@ class WrangleAI:
     ) -> "WrangleAI":
         """
         Create a new client instance with modified configuration.
-        
+
         Args:
             api_key: Override API key
             base_url: Override base URL
             timeout: Override default timeout
             max_retries: Override max retry attempts
-        
+
         Returns:
             New WrangleAI client instance with updated options
-        
+
         Example:
             ```python
             client = WrangleAI(api_key="key1")
-            
+
             # Create a new client with different settings
             custom_client = client.with_options(
                 timeout=120.0,
@@ -138,34 +151,35 @@ class WrangleAI:
     def _request(self, method: str, path: str, **kwargs) -> Any:
         """Make request to main server with retry logic."""
         import time
-        
+
         retries = 0
         max_retries = self.max_retries
-        
+
         # Log request details (debug level)
         logger.debug(f"Making {method} request to {path}")
         if "json" in kwargs:
-            logger.debug(f"Request body: {json.dumps(kwargs['json'], indent=2)}")
-        
+            logger.debug(
+                f"Request body: {json.dumps(kwargs['json'], indent=2)}")
+
         while True:
             try:
                 response = self._client.request(method, path, **kwargs)
                 response.raise_for_status()
-                
+
                 # Store request ID for later retrieval if needed
                 self._last_request_id = response.headers.get("x-request-id")
-                
+
                 # Log response details (debug level)
                 logger.debug(f"Response status: {response.status_code}")
                 logger.debug(f"Response headers: {dict(response.headers)}")
-                
+
                 result = response.json()
                 logger.debug(f"Response body: {json.dumps(result, indent=2)}")
-                
+
                 return result
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code
-                
+
                 # Parse error message
                 try:
                     err_body = e.response.json()
@@ -176,34 +190,36 @@ class WrangleAI:
                 except Exception:
                     msg = str(e)
                     err_body = None
-                
+
                 # Check if we should retry (408, 429, 500, 502, 503, 504)
                 should_retry = status_code in {408, 429, 500, 502, 503, 504}
-                
+
                 if should_retry and retries < max_retries:
                     retries += 1
                     # Exponential backoff: 1s, 2s, 4s, 8s... (capped at 60s)
                     wait_time = min(2 ** (retries - 1), 60)
-                    logger.warning(f"Request failed with status {status_code}, retrying in {wait_time}s (attempt {retries}/{max_retries})")
+                    logger.warning(
+                        f"Request failed with status {status_code}, retrying in {wait_time}s (attempt {retries}/{max_retries})")
                     time.sleep(wait_time)
                     continue
-                
+
                 # Log error
-                logger.error(f"Request failed with status {status_code}: {msg}")
-                
+                logger.error(
+                    f"Request failed with status {status_code}: {msg}")
+
                 # Use centralized error mapping
                 raise _make_status_error(status_code, err_body, msg)
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 logger.error(f"Connection error: {str(e)}")
                 raise APIConnectionError(f"Connection error: {str(e)}")
-    
+
     def _rag_request(self, method: str, path: str, **kwargs) -> Any:
         """Make requests to RAG server (port 8085) with retry logic."""
         import time
-        
+
         retries = 0
         max_retries = self.max_retries
-        
+
         while True:
             try:
                 response = self._rag_client.request(method, path, **kwargs)
@@ -212,7 +228,7 @@ class WrangleAI:
                 return response.json()
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code
-                
+
                 try:
                     err_body = e.response.json()
                     if isinstance(err_body.get("error"), dict):
@@ -222,26 +238,29 @@ class WrangleAI:
                 except Exception:
                     msg = str(e)
                     err_body = None
-                
+
                 # Check if we should retry (408, 429, 500, 502, 503, 504)
                 should_retry = status_code in {408, 429, 500, 502, 503, 504}
-                
+
                 if should_retry and retries < max_retries:
                     retries += 1
                     # Exponential backoff: 1s, 2s, 4s, 8s...
                     wait_time = min(2 ** (retries - 1), 60)
                     time.sleep(wait_time)
                     continue
-                
+
                 # Use centralized error mapping
                 raise _make_status_error(status_code, err_body, msg)
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 raise APIConnectionError(f"Connection error: {str(e)}")
 
 # --- Chat Namespace ---
+
+
 class Chat:
     def __init__(self, client: WrangleAI):
         self.completions = Completions(client)
+
 
 class Completions:
     def __init__(self, client: WrangleAI):
@@ -262,7 +281,7 @@ class Completions:
         **kwargs
     ) -> Union[ChatCompletion, WrangleObject]:
         ...
-    
+
     @overload
     def create(
         self,
@@ -278,7 +297,7 @@ class Completions:
         **kwargs
     ) -> Union[Generator[ChatCompletionChunk, None, None], Generator[WrangleObject, None, None]]:
         ...
-    
+
     def create(
         self,
         *,
@@ -296,7 +315,7 @@ class Completions:
     ) -> Union[ChatCompletion, WrangleObject, Generator[ChatCompletionChunk, None, None], Generator[WrangleObject, None, None]]:
         """
         Create a chat completion.
-        
+
         Args:
             messages: A list of messages comprising the conversation.
             model: ID of the model to use (e.g. "auto", "gpt-4o").
@@ -309,7 +328,7 @@ class Completions:
             timeout: Optional per-request timeout override (seconds).
             extra_headers: Optional additional headers to include in the request.
             **kwargs: Additional parameters.
-        
+
         Returns:
             ChatCompletion or Generator[ChatCompletionChunk] (or legacy WrangleObject equivalents).
         """
@@ -338,7 +357,8 @@ class Completions:
         if stream:
             return self._stream_request(payload, legacy_response, timeout=timeout, extra_headers=extra_headers)
         else:
-            data = self._client._request("POST", "/chat/completions", **request_kwargs)
+            data = self._client._request(
+                "POST", "/chat/completions", **request_kwargs)
             if legacy_response:
                 return WrangleObject(data)
             completion = ChatCompletion.model_validate(data)
@@ -353,11 +373,11 @@ class Completions:
             request_kwargs["timeout"] = timeout
         if extra_headers:
             request_kwargs["headers"] = extra_headers
-            
+
         with self._client._client.stream("POST", "/chat/completions", **request_kwargs) as response:
             # Capture request ID from headers
             request_id = response.headers.get("x-request-id")
-            
+
             if response.status_code != 200:
                 content = response.read().decode('utf-8')
                 try:
@@ -367,7 +387,7 @@ class Completions:
                 except Exception:
                     msg = content
                     err_body = None
-                
+
                 # Use centralized error mapping
                 raise _make_status_error(response.status_code, err_body, msg)
 
@@ -384,7 +404,8 @@ class Completions:
                             if legacy_response:
                                 yield WrangleObject(chunk)
                             else:
-                                chunk_obj = ChatCompletionChunk.model_validate(chunk)
+                                chunk_obj = ChatCompletionChunk.model_validate(
+                                    chunk)
                                 chunk_obj.request_id = request_id
                                 yield chunk_obj
                         except json.JSONDecodeError:
@@ -394,6 +415,8 @@ class Completions:
                 return
 
 # --- Models Namespace ---
+
+
 class Models:
     def __init__(self, client: WrangleAI):
         self._client = client
@@ -401,7 +424,7 @@ class Models:
     def list(self) -> ModelsListResponse:
         """
         Lists the currently available models.
-        
+
         Returns:
             ModelsListResponse: List of available models
         """
@@ -409,6 +432,8 @@ class Models:
         return ModelsListResponse.model_validate(data)
 
 # --- Usage Namespace ---
+
+
 class Usage:
     def __init__(self, client: WrangleAI):
         self._client = client
@@ -434,6 +459,8 @@ class Usage:
         return WrangleObject(data)
 
 # --- Cost Namespace ---
+
+
 class Cost:
     def __init__(self, client: WrangleAI):
         self._client = client
@@ -449,6 +476,8 @@ class Cost:
         return WrangleObject(data)
 
 # --- Keys Namespace ---
+
+
 class Keys:
     def __init__(self, client: WrangleAI):
         self._client = client
@@ -456,7 +485,7 @@ class Keys:
     def verify(self) -> WrangleObject:
         # The keys/verify endpoint requires X-API-Key header instead of Bearer token
         data = self._client._request(
-            "GET", 
+            "GET",
             "/keys/verify",
             headers={"X-API-Key": self._client.api_key}
         )
@@ -469,17 +498,17 @@ class Sustainability:
         self._client = client
 
     def retrieve(
-        self, 
+        self,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None
     ) -> SustainabilityReport:
         """
         Retrieve sustainability metrics (energy consumption and carbon emissions).
-        
+
         Args:
             start_date: Start date for the report (ISO format: YYYY-MM-DD)
             end_date: End date for the report (ISO format: YYYY-MM-DD)
-        
+
         Returns:
             SustainabilityReport with emissions data and equivalents
         """
@@ -488,7 +517,7 @@ class Sustainability:
             params["startDate"] = start_date
         if end_date:
             params["endDate"] = end_date
-        
+
         data = self._client._request("GET", "/sustainability", params=params)
         return SustainabilityReport.model_validate(data)
 
@@ -499,7 +528,7 @@ class Files:
         self._client = client
 
     def create(
-        self, 
+        self,
         file: BinaryIO,
         purpose: str = "assistants",
         filename: Optional[str] = None,
@@ -509,22 +538,22 @@ class Files:
     ) -> FileObject:
         """
         Upload a file to WrangleAI.
-        
+
         Args:
             file: File object opened in binary mode
             purpose: The intended purpose of the file (default: "assistants")
             filename: Optional filename with extension (e.g., 'document.pdf')
             timeout: Optional per-request timeout override (seconds)
             extra_headers: Optional additional headers to include in the request
-        
+
         Returns:
             FileObject with file metadata
         """
         import time
-        
+
         files = {"file": (filename, file) if filename else file}
         data = {"purpose": purpose}
-        
+
         # Prepare request kwargs
         request_kwargs = {"files": files, "data": data}
         if timeout is not None:
@@ -532,19 +561,20 @@ class Files:
         if extra_headers:
             # Merge with existing headers
             request_kwargs["headers"] = extra_headers
-        
+
         # Implement retry logic with error handling
         retries = 0
         max_retries = self._client.max_retries
-        
+
         while True:
             try:
-                response = self._client._rag_client.post("/files", **request_kwargs)
+                response = self._client._rag_client.post(
+                    "/files", **request_kwargs)
                 response.raise_for_status()
                 return FileObject(**response.json())
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code
-                
+
                 try:
                     err_body = e.response.json()
                     if isinstance(err_body.get("error"), dict):
@@ -554,16 +584,16 @@ class Files:
                 except Exception:
                     msg = str(e)
                     err_body = None
-                
+
                 # Check if we should retry
                 should_retry = status_code in {408, 429, 500, 502, 503, 504}
-                
+
                 if should_retry and retries < max_retries:
                     retries += 1
                     wait_time = min(2 ** (retries - 1), 60)
                     time.sleep(wait_time)
                     continue
-                
+
                 # Use centralized error mapping
                 raise _make_status_error(status_code, err_body, msg)
             except (httpx.ConnectError, httpx.TimeoutException) as e:
@@ -578,13 +608,13 @@ class Files:
     ) -> FileListResponse:
         """
         List files.
-        
+
         Args:
             purpose: Filter by file purpose
             limit: Number of files to return (1-10000)
             order: Sort order ('asc' or 'desc')
             after: Cursor for pagination
-        
+
         Returns:
             FileListResponse with list of files
         """
@@ -597,17 +627,17 @@ class Files:
             params["order"] = order
         if after:
             params["after"] = after
-        
+
         data = self._client._rag_request("GET", "/files", params=params)
         return FileListResponse(**data)
 
     def retrieve(self, file_id: str) -> FileObject:
         """
         Get file metadata.
-        
+
         Args:
             file_id: The ID of the file
-        
+
         Returns:
             FileObject with file metadata
         """
@@ -617,10 +647,10 @@ class Files:
     def delete(self, file_id: str) -> FileDeleted:
         """
         Delete a file.
-        
+
         Args:
             file_id: The ID of the file to delete
-        
+
         Returns:
             FileDeleted confirmation
         """
@@ -642,13 +672,13 @@ class VectorStoreFiles:
     ) -> VectorStoreFile:
         """
         Add a file to a vector store.
-        
+
         Args:
             vector_store_id: The ID of the vector store
             file_id: The ID of the file to add
             attributes: Optional metadata key-value pairs
             chunking_strategy: Optional chunking configuration
-        
+
         Returns:
             VectorStoreFile object
         """
@@ -657,7 +687,7 @@ class VectorStoreFiles:
             payload["attributes"] = attributes
         if chunking_strategy:
             payload["chunking_strategy"] = chunking_strategy
-        
+
         data = self._client._rag_request(
             "POST",
             f"/vector_stores/{vector_store_id}/files",
@@ -676,7 +706,7 @@ class VectorStoreFiles:
     ) -> VectorStoreFileListResponse:
         """
         List files in a vector store.
-        
+
         Args:
             vector_store_id: The ID of the vector store
             limit: Number of files to return (1-100)
@@ -684,7 +714,7 @@ class VectorStoreFiles:
             after: Cursor for pagination
             before: Cursor for pagination
             filter: Filter by status ('in_progress', 'completed', 'failed', 'cancelled')
-        
+
         Returns:
             VectorStoreFileListResponse with list of files
         """
@@ -699,7 +729,7 @@ class VectorStoreFiles:
             params["before"] = before
         if filter:
             params["filter"] = filter
-        
+
         data = self._client._rag_request(
             "GET",
             f"/vector_stores/{vector_store_id}/files",
@@ -714,11 +744,11 @@ class VectorStoreFiles:
     ) -> VectorStoreFile:
         """
         Get a vector store file.
-        
+
         Args:
             vector_store_id: The ID of the vector store
             file_id: The ID of the file
-        
+
         Returns:
             VectorStoreFile object
         """
@@ -736,12 +766,12 @@ class VectorStoreFiles:
     ) -> VectorStoreFile:
         """
         Update file attributes in a vector store.
-        
+
         Args:
             vector_store_id: The ID of the vector store
             file_id: The ID of the file
             attributes: Metadata key-value pairs to update
-        
+
         Returns:
             VectorStoreFile object with updated attributes
         """
@@ -759,11 +789,11 @@ class VectorStoreFiles:
     ) -> VectorStoreFileDeleted:
         """
         Remove a file from a vector store.
-        
+
         Args:
             vector_store_id: The ID of the vector store
             file_id: The ID of the file to remove
-        
+
         Returns:
             VectorStoreFileDeleted confirmation
         """
@@ -790,14 +820,14 @@ class VectorStores:
     ) -> VectorStore:
         """
         Create a vector store.
-        
+
         Args:
             name: The name of the vector store
             file_ids: List of file IDs to add to the vector store
             metadata: Optional metadata key-value pairs
             expires_after: Expiration policy configuration
             chunking_strategy: Chunking configuration for files
-        
+
         Returns:
             VectorStore object
         """
@@ -812,8 +842,9 @@ class VectorStores:
             payload["expires_after"] = expires_after
         if chunking_strategy:
             payload["chunking_strategy"] = chunking_strategy
-        
-        data = self._client._rag_request("POST", "/vector_stores", json=payload)
+
+        data = self._client._rag_request(
+            "POST", "/vector_stores", json=payload)
         return VectorStore(**data)
 
     def list(
@@ -825,13 +856,13 @@ class VectorStores:
     ) -> VectorStoreListResponse:
         """
         List vector stores.
-        
+
         Args:
             limit: Number of vector stores to return (1-100)
             order: Sort order ('asc' or 'desc')
             after: Cursor for pagination
             before: Cursor for pagination
-        
+
         Returns:
             VectorStoreListResponse with list of vector stores
         """
@@ -844,21 +875,23 @@ class VectorStores:
             params["after"] = after
         if before:
             params["before"] = before
-        
-        data = self._client._rag_request("GET", "/vector_stores", params=params)
+
+        data = self._client._rag_request(
+            "GET", "/vector_stores", params=params)
         return VectorStoreListResponse(**data)
 
     def retrieve(self, vector_store_id: str) -> VectorStore:
         """
         Get a vector store.
-        
+
         Args:
             vector_store_id: The ID of the vector store
-        
+
         Returns:
             VectorStore object
         """
-        data = self._client._rag_request("GET", f"/vector_stores/{vector_store_id}")
+        data = self._client._rag_request(
+            "GET", f"/vector_stores/{vector_store_id}")
         return VectorStore(**data)
 
     def update(
@@ -870,13 +903,13 @@ class VectorStores:
     ) -> VectorStore:
         """
         Update a vector store.
-        
+
         Args:
             vector_store_id: The ID of the vector store
             name: Updated name
             metadata: Updated metadata key-value pairs
             expires_after: Updated expiration policy
-        
+
         Returns:
             VectorStore object with updates
         """
@@ -887,7 +920,7 @@ class VectorStores:
             payload["metadata"] = metadata
         if expires_after:
             payload["expires_after"] = expires_after
-        
+
         data = self._client._rag_request(
             "POST",
             f"/vector_stores/{vector_store_id}",
@@ -898,14 +931,15 @@ class VectorStores:
     def delete(self, vector_store_id: str) -> VectorStoreDeleted:
         """
         Delete a vector store.
-        
+
         Args:
             vector_store_id: The ID of the vector store to delete
-        
+
         Returns:
             VectorStoreDeleted confirmation
         """
-        data = self._client._rag_request("DELETE", f"/vector_stores/{vector_store_id}")
+        data = self._client._rag_request(
+            "DELETE", f"/vector_stores/{vector_store_id}")
         return VectorStoreDeleted(**data)
 
     def search(
@@ -919,7 +953,7 @@ class VectorStores:
     ) -> VectorStoreSearchResponse:
         """
         Search a vector store.
-        
+
         Args:
             vector_store_id: The ID of the vector store
             query: Search query string or list of strings
@@ -927,7 +961,7 @@ class VectorStores:
             max_num_results: Maximum results to return (1-50)
             ranking_options: Re-ranking configuration
             rewrite_query: Whether to rewrite the query for vector search
-        
+
         Returns:
             VectorStoreSearchResponse with search results
         """
@@ -940,7 +974,7 @@ class VectorStores:
             payload["ranking_options"] = ranking_options
         if rewrite_query is not None:
             payload["rewrite_query"] = rewrite_query
-        
+
         data = self._client._rag_request(
             "POST",
             f"/vector_stores/{vector_store_id}/search",
